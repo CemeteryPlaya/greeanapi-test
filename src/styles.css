@@ -282,6 +282,22 @@ p {
   font-size: 14px;
 }
 
+.login__error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login__error-hint {
+  color: var(--text);
+}
+
+.login__error-url {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 /* ---------- раскладка мессенджера ---------- */
 
 .messenger {

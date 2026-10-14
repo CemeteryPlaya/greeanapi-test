@@ -1,5 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import { createGreenApi, DEFAULT_API_URL, GreenApiError, normalizeApiUrl } from '../api/greenApi';
+import {
+  createGreenApi,
+  DEFAULT_API_URL,
+  GreenApiError,
+  instanceHostHint,
+  normalizeApiUrl,
+  normalizeIdInstance,
+} from '../api/greenApi';
 import { isPlatform, PLATFORM_LIST, PLATFORMS } from '../lib/platforms';
 import type { Credentials, Platform } from '../types';
 
@@ -36,6 +43,12 @@ const initialPlatform: Platform = isPlatform(env.VITE_GREEN_API_PLATFORM)
   ? env.VITE_GREEN_API_PLATFORM
   : 'whatsapp';
 
+interface LoginError {
+  message: string;
+  hint?: string | null;
+  requestUrl?: string;
+}
+
 interface LoginScreenProps {
   onLogin: (credentials: Credentials) => void;
 }
@@ -46,7 +59,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   const [apiUrl, setApiUrl] = useState(preset?.apiUrl ?? DEFAULT_API_URL);
   const [idInstance, setIdInstance] = useState(preset?.idInstance ?? '');
   const [apiTokenInstance, setApiTokenInstance] = useState(preset?.apiTokenInstance ?? '');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginError | null>(null);
   const [loading, setLoading] = useState(false);
 
   function selectPlatform(next: Platform) {
@@ -65,7 +78,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
     const credentials: Credentials = {
       platform,
       apiUrl: normalizeApiUrl(apiUrl),
-      idInstance: idInstance.trim(),
+      idInstance: normalizeIdInstance(idInstance),
       apiTokenInstance: apiTokenInstance.trim(),
     };
 
@@ -75,12 +88,20 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       const state = await createGreenApi(credentials).getStateInstance();
       if (state?.stateInstance !== 'authorized') {
         const status = state?.stateInstance ?? 'unknown';
-        setError(stateHints(platform)[status] ?? `Инстанс в состоянии «${status}»`);
+        setError({ message: stateHints(platform)[status] ?? `Инстанс в состоянии «${status}»` });
         return;
       }
       onLogin(credentials);
     } catch (err) {
-      setError(err instanceof GreenApiError ? err.message : 'Не удалось подключиться к GREEN-API');
+      if (err instanceof GreenApiError) {
+        setError({
+          message: err.message,
+          hint: err.status === 404 ? instanceHostHint(credentials.apiUrl, credentials.idInstance) : null,
+          requestUrl: err.requestUrl,
+        });
+      } else {
+        setError({ message: 'Не удалось подключиться к GREEN-API' });
+      }
     } finally {
       setLoading(false);
     }
@@ -157,9 +178,11 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         </label>
 
         {error && (
-          <p className="login__error" role="alert">
-            {error}
-          </p>
+          <div className="login__error" role="alert">
+            <p>{error.message}</p>
+            {error.hint && <p className="login__error-hint">{error.hint}</p>}
+            {error.requestUrl && <code className="login__error-url">{error.requestUrl}</code>}
+          </div>
         )}
 
         <button className="button button--primary" type="submit" disabled={loading}>

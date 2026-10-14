@@ -4,11 +4,14 @@ export const DEFAULT_API_URL = 'https://api.green-api.com';
 
 export class GreenApiError extends Error {
   readonly status?: number;
+  /** Адрес запроса со скрытым токеном — для диагностики */
+  readonly requestUrl?: string;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, requestUrl?: string) {
     super(message);
     this.name = 'GreenApiError';
     this.status = status;
+    this.requestUrl = requestUrl;
   }
 }
 
@@ -59,15 +62,35 @@ export interface Notification {
   body: NotificationBody;
 }
 
+/** apiUrl — только схема и хост: лишний путь (например, скопированный …/waInstance…) отбрасывается. */
 export function normalizeApiUrl(apiUrl: string): string {
-  const trimmed = apiUrl.trim().replace(/\/+$/, '');
+  const trimmed = apiUrl.trim().replace(/^["']|["']$/g, '').trim();
   if (!trimmed) return DEFAULT_API_URL;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    return new URL(withProtocol).origin;
+  } catch {
+    return withProtocol.replace(/\/+$/, '');
+  }
+}
+
+/** idInstance — только цифры (на случай вставки «waInstance1101…» или с пробелами). */
+export const normalizeIdInstance = (idInstance: string) => idInstance.replace(/\D/g, '');
+
+/**
+ * Номер сервера в apiUrl (7103.api.green-api.com) совпадает с первыми цифрами idInstance.
+ * Возвращает подсказку, если они расходятся, — частая причина 404.
+ */
+export function instanceHostHint(apiUrl: string, idInstance: string): string | null {
+  const host = /^https?:\/\/(\d{4})\./.exec(normalizeApiUrl(apiUrl))?.[1];
+  const id = normalizeIdInstance(idInstance);
+  if (!host || !id || id.startsWith(host)) return null;
+  return `idInstance ${id} не похож на инстанс сервера ${host} — возможно, apiUrl от другого инстанса (ожидается https://${id.slice(0, 4)}.api.green-api.com)`;
 }
 
 function describeStatus(status: number): string {
   if (status === 401 || status === 403) return 'Неверный idInstance или apiTokenInstance';
-  if (status === 404) return 'Метод не найден — проверьте apiUrl';
+  if (status === 404) return 'GREEN-API не нашёл инстанс по этому адресу — проверьте apiUrl и idInstance';
   if (status === 429) return 'Слишком много запросов, попробуйте позже';
   if (status === 466) return 'Исчерпан лимит запросов тарифа (466)';
   if (status >= 500) return `Сервер GREEN-API недоступен (${status})`;
@@ -77,9 +100,10 @@ function describeStatus(status: number): string {
 export type GreenApi = ReturnType<typeof createGreenApi>;
 
 export function createGreenApi(credentials: Credentials) {
-  const base = `${normalizeApiUrl(credentials.apiUrl)}/waInstance${credentials.idInstance.trim()}`;
+  const base = `${normalizeApiUrl(credentials.apiUrl)}/waInstance${normalizeIdInstance(credentials.idInstance)}`;
   const token = credentials.apiTokenInstance.trim();
   const url = (method: string, suffix = '') => `${base}/${method}/${token}${suffix}`;
+  const masked = (input: string) => (token ? input.replace(token, '***') : input);
 
   async function request<T>(input: string, init: RequestInit = {}): Promise<T | null> {
     let response: Response;
@@ -87,9 +111,11 @@ export function createGreenApi(credentials: Credentials) {
       response = await fetch(input, init);
     } catch (error) {
       if (init.signal?.aborted) throw error;
-      throw new GreenApiError('Нет соединения с GREEN-API');
+      throw new GreenApiError('Нет соединения с GREEN-API', undefined, masked(input));
     }
-    if (!response.ok) throw new GreenApiError(describeStatus(response.status), response.status);
+    if (!response.ok) {
+      throw new GreenApiError(describeStatus(response.status), response.status, masked(input));
+    }
 
     // receiveNotification по таймауту отдаёт пустое тело или `null`
     const text = await response.text();

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createGreenApi, GreenApiError, normalizeApiUrl } from './greenApi';
+import {
+  createGreenApi,
+  GreenApiError,
+  instanceHostHint,
+  normalizeApiUrl,
+  normalizeIdInstance,
+} from './greenApi';
 
 const credentials = { platform: 'whatsapp' as const, apiUrl: 'https://api.green-api.com/', idInstance: '1101000001', apiTokenInstance: 'token' };
 
@@ -18,6 +24,24 @@ describe('normalizeApiUrl', () => {
     expect(normalizeApiUrl('https://1103.api.green-api.com/')).toBe('https://1103.api.green-api.com');
     expect(normalizeApiUrl('1103.api.green-api.com')).toBe('https://1103.api.green-api.com');
     expect(normalizeApiUrl('  ')).toBe('https://api.green-api.com');
+  });
+});
+
+describe('нормализация ввода', () => {
+  it('apiUrl: отбрасывает путь и кавычки', () => {
+    expect(normalizeApiUrl('"https://7201.api.green-api.com/waInstance7201000001/"')).toBe(
+      'https://7201.api.green-api.com',
+    );
+  });
+
+  it('idInstance: оставляет только цифры', () => {
+    expect(normalizeIdInstance(' waInstance7201000001 ')).toBe('7201000001');
+  });
+
+  it('подсказывает, если idInstance не с этого сервера', () => {
+    expect(instanceHostHint('https://7201.api.green-api.com', '7103000001')).toMatch(/7103/);
+    expect(instanceHostHint('https://7201.api.green-api.com', '7201000001')).toBeNull();
+    expect(instanceHostHint('https://api.green-api.com', '7103000001')).toBeNull();
   });
 });
 
@@ -69,5 +93,13 @@ describe('createGreenApi', () => {
     expect(error).toBeInstanceOf(GreenApiError);
     expect(error.status).toBe(401);
     expect(error.message).toMatch(/apiTokenInstance/);
+  });
+
+  it('в ошибке есть адрес запроса без токена', async () => {
+    mockFetch('', 404);
+    const error = await createGreenApi(credentials).getStateInstance().catch((e) => e);
+    expect(error.requestUrl).toBe(
+      'https://api.green-api.com/waInstance1101000001/getStateInstance/***',
+    );
   });
 });
