@@ -1,0 +1,7 @@
+node_modules
+dist
+*.local
+.claude
+.codebase-memory
+.remember
+.playwright-mcp
